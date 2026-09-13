@@ -1,0 +1,13 @@
+.venv/
+.env
+__pycache__/
+.ipynb_checkpoints/
+artifacts/
+mlruns/
+mlflow.db
+mlartifacts/
+archive/
+logs/
+codex-session-*.md
+.codex/
+.agents/

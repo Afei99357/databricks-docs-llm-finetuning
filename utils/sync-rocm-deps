@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Build ROCm extensions with the complete user-local ROCm SDK, while retaining
+# the ROCm 7.0 runtime required by this project's PyTorch wheel.
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+project_root="$(cd -- "${script_dir}/.." && pwd)"
+compiler_root="${ROCM_COMPILER_ROOT:-/home/eric/opt/rocm-7.14}"
+runtime_root="${ROCM_RUNTIME_ROOT:-/opt/rocm}"
+
+if [[ ! -x "${compiler_root}/bin/hipcc" ]]; then
+    echo "ROCm compiler not found: ${compiler_root}/bin/hipcc" >&2
+    exit 1
+fi
+if [[ ! -f "${compiler_root}/include/hipcub/hipcub.hpp" ]]; then
+    echo "HIP CUB headers not found under: ${compiler_root}" >&2
+    exit 1
+fi
+
+export ROCM_PATH="$compiler_root"
+export PATH="${compiler_root}/bin:${PATH}"
+export PYTORCH_ROCM_ARCH="${PYTORCH_ROCM_ARCH:-gfx1100}"
+export LD_LIBRARY_PATH="${runtime_root}/lib:${runtime_root}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+cd "$project_root"
+exec uv sync --no-build-isolation-package causal-conv1d "$@"

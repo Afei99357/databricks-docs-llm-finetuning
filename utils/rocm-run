@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Run a project command with the host ROCm runtime available to PyTorch.
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+project_root="$(cd -- "${script_dir}/.." && pwd)"
+
+export LD_LIBRARY_PATH="/opt/rocm/lib:/opt/rocm/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+# The host also exposes a gfx1036 integrated GPU without native BF16 support.
+# Keep the RX 7900 XTX as device 0 unless the caller deliberately overrides it.
+export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
+cd "$project_root"
+exec uv run --no-sync "$@"

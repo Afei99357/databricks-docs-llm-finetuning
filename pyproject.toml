@@ -1,0 +1,27 @@
+[project]
+name = "local-docs-qa-generation"
+version = "0.1.0"
+description = "Generate a grounded Q&A dataset from the local documentation RAG corpus"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "causal-conv1d==1.7.0",
+  "flash-linear-attention[rocm]==0.5.2",
+  "jupyter>=1.0",
+  "mlflow>=3.15,<4",
+  "openai>=1.40",
+  "pydantic>=2.0",
+  "pyyaml>=6.0",
+  "python-dotenv>=1.0",
+  "torchao==0.13.0",
+  "tqdm>=4.70.0",
+  "unsloth[rocm702-torch280] @ git+https://github.com/unslothai/unsloth.git@main",
+]
+
+[dependency-groups]
+dev = [
+  "nbclient>=0.10",
+  "pytest>=8.0",
+]
+
+[tool.uv]
+package = false
