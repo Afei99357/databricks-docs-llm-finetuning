@@ -115,6 +115,18 @@ Each Q&A generation stage is resumable. Its SQLite database records completed,
 pending, and failed work, so rerunning a stage retries only unfinished items.
 Do not run stages 03–07 until both training-Q&A generators finish.
 
+## Workflow scripts
+
+| Step | Script | What it does |
+| ---: | --- | --- |
+| 01 | `scripts/qa_generation/01_generate_page_aware_qa.py` | Generates training Q&A from whole documentation pages or heading-aware page windows. |
+| 02 | `scripts/qa_generation/02_generate_independent_qa.py` | Generates complementary training Q&A from each chunk and its adjacent context. |
+| 03 | `scripts/qa_generation/03_generate_paired_evaluation_qa.py` | Creates alternate evaluation questions over the same knowledge as accepted training examples. |
+| 04 | `scripts/qa_generation/04_export_final_datasets.py` | Validates contexts and exports immutable training and benchmark JSONL snapshots. |
+| 05 | `scripts/training/05_finetune_llm.py` | Fine-tunes Qwen with QLoRA and preserves the best checkpoint and adapter. |
+| 06 | `scripts/evaluation/06_evaluate_checkpoints.py` | Scores base models, checkpoints, and adapters on generated answers for the full benchmark. |
+| 07 | `scripts/evaluation/07_compare_winner_with_rag.py` | Compares the selected adapter with the local RAG application answer by answer. |
+
 ## Evaluation approach
 
 The experiment answers three distinct questions:
