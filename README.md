@@ -1,191 +1,143 @@
-# Databricks documentation fine-tuning
+# Databricks documentation LLM fine-tuning
 
-Build and evaluate local Qwen QLoRA adapters from the current Databricks
-documentation corpus.
+Can a local fine-tuned LLM answer stable Databricks documentation questions
+well enough to complement a citation-backed RAG system?
 
-The project creates two training datasets, then tests the resulting model on
-newly phrased questions about knowledge it was trained to cover. It also
-compares the best adapter with the local RAG application.
+This project builds a reproducible experiment to answer that question. It
+creates grounded Q&A data from a local Databricks documentation corpus,
+fine-tunes Qwen with QLoRA on an AMD GPU, and evaluates the resulting adapter
+against its base model and a local RAG application.
 
-## Goal and evaluation design
+The goal is not to replace RAG. RAG remains the route for fresh,
+evidence-sensitive, or citation-required questions. This project tests where a
+local adapter can be useful for stable, recurring knowledge and where it should
+fall back to RAG.
 
-The goal is not to replace RAG for current, cited answers. RAG remains the
-right tool when documentation freshness and citations matter. This project
-tests whether fine-tuning improves a local model's learned Databricks product
-knowledge and answer behavior.
-
-The earlier document-heldout evaluation design was intentionally retired. It
-could test facts that the fine-tuned model had never been allowed to learn.
-Instead, the paired benchmark uses this relationship:
+## What the project does
 
 ```text
-accepted training Q&A
-        │ same documented knowledge and evidence
-        ▼
-alternate evaluation Q&A
-        │ different question wording or realistic scenario
-        ▼
-unseen exact question and answer for evaluation
+Databricks documentation SQLite corpus
+        |
+        +-- page-aware Q&A: preserve a page's structure and headings
+        |
+        +-- independent Q&A: cover chunks and their immediate context
+        |
+        +-- paired benchmark Q&A: alternate questions over the same knowledge
+        v
+Immutable training and benchmark JSONL snapshots
+        v
+Qwen QLoRA fine-tuning with MLflow tracking
+        v
+Base model vs. adapter evaluation
+        v
+Best local adapter vs. local RAG comparison
 ```
 
-The model may learn the underlying knowledge from training, but it never sees
-the benchmark's exact question/answer pair during optimization.
+The paired benchmark is deliberately separate from training. The adapter may
+learn the documented knowledge, but it never sees the benchmark's exact
+question-and-answer pairs during training.
 
-## Data flow
+## Repository layout
 
 ```text
-Databricks documentation SQLite (read-only)
-        │
-        ├── page-aware Q&A ──── artifacts/qa_page_aware/generation.sqlite
-        ├── independent Q&A ─── artifacts/qa_independent/generation.sqlite
-        │
-        ├── paired benchmark Q&A ─ artifacts/qa_evaluation/generation.sqlite
-        ▼
-immutable versioned JSONL snapshot + manifest
-        │
-        ├── training.jsonl
-        ├── benchmark_selection_50.jsonl
-        └── benchmark_400.jsonl
-        ▼
-QLoRA checkpoints, best adapter, MLflow records
-        ▼
-400-question model evaluation and model-versus-RAG comparison
+scripts/
+  qa_generation/     numbered data-generation and dataset-export stages
+  training/          QLoRA training and MLflow helper
+  evaluation/        model and RAG comparison stages
+configs/experiments/ versioned training configurations
+utils/               ROCm runtime and dependency helpers
+docs/                focused implementation notes
+artifacts/           local generation state, datasets, models, and results
 ```
 
-## Prerequisites
+`artifacts/`, `.env`, MLflow data, and local model environments are ignored by
+Git. The repository contains the code, configuration, and documentation needed
+to reproduce an experiment without publishing local data or credentials.
 
-- Current documentation corpus: `/home/eric/Projects/databricks_docs_rag/data/local.sqlite`
-- Local OpenAI-compatible generation server for Q&A and judge generation
-- ROCm-compatible AMD GPU for fine-tuning
-- Project dependencies installed with `uv`
+## Local setup
 
-The source SQLite database is read-only from this project.
+This project expects:
 
-## Generation state and resumability
+- a local Databricks documentation SQLite corpus;
+- a local OpenAI-compatible server for Q&A generation and judging;
+- an AMD ROCm-capable GPU for fine-tuning; and
+- dependencies installed with `uv`.
 
-Each Q&A generator stores durable state in SQLite. It can be stopped and
-rerun: completed questions and answers are retained, while pending work
-resumes. The two active state databases are:
-
-```text
-artifacts/qa_page_aware/generation.sqlite
-artifacts/qa_independent/generation.sqlite
-```
-
-Page-aware generation uses one whole page where possible and heading-aware
-windows only for oversized pages. Independent generation uses a chunk with its
-neighbours from the same document. The final export validates each saved Q&A
-context against the current source corpus before including it in training.
-
-## Workflow
-
-Run the numbered scripts in order.
-
-The same commands are available as short `just` recipes; run `just --list` to
-see them. For example, `just page-aware-qa`, `just export-dataset v001`, and
-`just train-smoke configs/experiments/05_qwen35_4b_v001.yaml`.
+Create your local configuration:
 
 ```bash
-# 1–2. Generate training Q&A
-uv run python scripts/qa_generation/01_generate_page_aware_qa.py
-uv run python scripts/qa_generation/02_generate_independent_qa.py
-
-# 3. Generate 400 paired evaluation Q&A items
-uv run python scripts/qa_generation/03_generate_paired_evaluation_qa.py
-
-# 4. Export immutable training, benchmark, and manifest files
-uv run python scripts/qa_generation/04_export_final_datasets.py --version v001
-
-# 5. Fine-tune a 4B Qwen model first
-utils/rocm-run python scripts/training/05_finetune_llm.py \
-  --config configs/experiments/05_qwen35_4b_v001.yaml \
-  --smoke-test --run
-
-# 6. Evaluate base model, checkpoints, and final adapters on all 400 questions
-utils/rocm-run python scripts/evaluation/06_evaluate_checkpoints.py \
-  --run-dir artifacts/models/qwen35-4b-v001-smoke \
-  --dataset-dir artifacts/datasets/v001
-
-# 7. Compare the selected adapter with the local RAG API
-uv run python scripts/evaluation/07_compare_winner_with_rag.py \
-  --run-dir artifacts/models/qwen35-4b-v001-smoke \
-  --model-results artifacts/models/qwen35-4b-v001-smoke/evaluations/best_adapter-benchmark_400.json
+cp .env.example .env
 ```
 
-Step 07 requires the RAG application to be running locally at
-`http://127.0.0.1:8000/api/answer`.
+Set `SOURCE_SQLITE_PATH` in `.env` to your local documentation corpus. Start
+your generation server before running any Q&A stage.
 
-## Main workflow scripts
+Validate the GPU environment:
 
-| Step | Script | Purpose | Reads | Creates / updates |
-|---:|---|---|---|---|
-| 01 | `scripts/qa_generation/01_generate_page_aware_qa.py` | Generate broad, page-structured training Q&A. | Current source SQLite; local generation model. | `artifacts/qa_page_aware/generation.sqlite` |
-| 02 | `scripts/qa_generation/02_generate_independent_qa.py` | Generate independent chunk-plus-neighbour training Q&A for broader coverage. | Current source SQLite; local generation model. | `artifacts/qa_independent/generation.sqlite` |
-| 03 | `scripts/qa_generation/03_generate_paired_evaluation_qa.py` | Select 400 distinct source pages and generate alternate evaluation Q&A from training knowledge units. | Completed page-aware and independent Q&A; local generation model. | `artifacts/qa_evaluation/generation.sqlite` |
-| 04 | `scripts/qa_generation/04_export_final_datasets.py` | Validate current contexts, combine both training sources, and create immutable dataset snapshots. | Three generation SQLite databases; current source SQLite. | Versioned `training.jsonl`, 50/400 benchmark JSONL, provenance files, and manifest. |
-| 05 | `scripts/training/05_finetune_llm.py` | Fine-tune a configured Qwen model with QLoRA and select the best checkpoint using the fixed 50-question set. | Versioned training dataset, manifest, experiment YAML. | Checkpoints, `best_checkpoint/`, adapters, run reports, MLflow run. |
-| 06 | `scripts/evaluation/06_evaluate_checkpoints.py` | Generate real answers for the base model, saved checkpoints, and adapters; judge them on all 400 items. | Model run directory, full benchmark, local judge model. | Per-candidate answers, scores, latency, MLflow evaluation runs. |
-| 07 | `scripts/evaluation/07_compare_winner_with_rag.py` | Compare the selected adapter and local RAG answer-by-answer on the same benchmark. | Saved model evaluation results, running RAG API, local judge model. | Pairwise wins, per-question comparison file, MLflow comparison run. |
-
-`scripts/training/test_checkpoint.py` is an optional manual probe. It is not a
-numbered workflow step: use it when you want to inspect one saved checkpoint
-with your own question before running the full benchmark.
-
-## Datasets
-
-- `qa_page_aware`: page-level contexts; preserves document structure.
-- `qa_independent`: chunk and adjacent-context questions; broadens coverage.
-- `benchmark_400`: one alternate evaluation question from each of 400 distinct
-  source pages. It is never included in training.
-- `benchmark_selection_50`: a fixed category-balanced subset used only for
-  selecting the best checkpoint during training.
-
-Step 04 writes immutable versioned JSONL files under `artifacts/datasets/`.
-It refuses to overwrite an existing version. The accompanying manifest records
-row counts, hashes, source-corpus fingerprint, and excluded context mismatches.
-
-## MLflow
-
-Fine-tuning, manual checkpoint probes, benchmark evaluation, and RAG
-comparison all log parameters, metrics, and artifacts to local MLflow.
-
-The training script retains the newest two resumable checkpoints and separately
-preserves the best checkpoint and adapter according to loss on the fixed
-50-question selection set. The final decision uses answer quality on all 400
-benchmark questions.
-
-The important selection distinction is:
-
-| During training | Final model decision |
-|---|---|
-| Fixed 50 paired questions; teacher-forced `eval_loss` every checkpoint interval | All 400 paired questions; generated answers and judge scores |
-| Selects and preserves `best_checkpoint/` | Compares base, checkpoints, final/best adapter, and RAG |
-
-Normal checkpoints include optimizer, scheduler, RNG, and adapter state for
-resuming. `best_adapter/` is the inference-ready copy; `best_checkpoint/`
-retains the full resumable training state.
-
-## Configuration
-
-`.env` contains local service settings such as the Q&A/judge model endpoint and
-worker counts. The source database path is `SOURCE_SQLITE_PATH`.
-
-Each material training experiment gets a new YAML file under
-`configs/experiments/`. Never edit a configuration after its training run has
-started. Start with the 4B smoke configuration, then make a separate 9B config
-only after the full workflow works.
-
-## Layout
-
-```text
-scripts/      runnable workflow steps and their shared helpers
-artifacts/    generation state, datasets, adapters, and evaluation outputs
-configs/      versioned experiment settings
-utils/        ROCm and local-run helpers
-archive/      historical code and experiments; not part of the active workflow
+```bash
+just sync-rocm-deps
+just check-rocm
 ```
 
-## Status
+## Run the experiment
 
-Q&A generation is in progress. Dataset export, training, and evaluation scripts
-are implemented but should not run until both Q&A datasets are complete.
+Run these stages from the repository root. `just` is the recommended interface:
+it supplies the ROCm runtime automatically for GPU work.
+
+```bash
+# 1. Generate page-aware training Q&A.
+just page-aware-qa
+
+# 2. Generate independent chunk-and-neighbour Q&A.
+just independent-qa
+
+# 3. Generate 400 paired evaluation Q&A items.
+just paired-evaluation-qa
+
+# 4. Validate the generated data and create immutable versioned datasets.
+just export-dataset v001
+
+# 5. Run a conservative 4B QLoRA smoke test.
+just train-smoke configs/experiments/05_qwen35_4b_v001.yaml
+
+# 6. Run generated-answer evaluation across the full 400-question benchmark.
+just evaluate-checkpoints \
+  artifacts/models/qwen35-4b-v001-smoke \
+  artifacts/datasets/v001
+
+# 7. Compare the selected adapter with the running local RAG application.
+just compare-rag \
+  artifacts/models/qwen35-4b-v001-smoke \
+  artifacts/models/qwen35-4b-v001-smoke/evaluations/best_adapter-benchmark_400.json
+```
+
+Each Q&A generation stage is resumable. Its SQLite database records completed,
+pending, and failed work, so rerunning a stage retries only unfinished items.
+Do not run stages 03–07 until both training-Q&A generators finish.
+
+## Evaluation approach
+
+The experiment answers three distinct questions:
+
+1. Does fine-tuning improve the original base model?
+2. Which adapter/checkpoint produces the best generated answers?
+3. How does the best local adapter compare with the grounded RAG application?
+
+Training uses the fixed 50-question selection subset to retain the best
+checkpoint. The final decision uses generated answers and a separate judge on
+all 400 paired benchmark items. The RAG comparison is an answer-by-answer
+comparison on that same benchmark.
+
+MLflow records configurations, metrics, reports, and model-selection evidence
+locally. See [the MLflow workflow notes](docs/mlflow_workflow.md) for details.
+
+## Practical notes
+
+- Run Python scripts through `just` or `utils/rocm-run`; the wrapper supplies
+  the ROCm runtime libraries needed by PyTorch.
+- The RAG comparison requires the local RAG API at
+  `http://127.0.0.1:8000/api/answer`, unless overridden at the command line.
+- Each material training run gets a new YAML file under `configs/experiments/`.
+  Do not alter a configuration after the run begins.
+- `scripts/training/test_checkpoint.py` is an optional manual checkpoint probe,
+  not a numbered workflow step.
