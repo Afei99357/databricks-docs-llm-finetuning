@@ -35,8 +35,11 @@ train-smoke config:
 train config:
     ./utils/rocm-run python scripts/training/05_finetune_llm.py --config {{config}} --run
 
-evaluate-checkpoints run_dir dataset_dir:
-    ./utils/rocm-run python scripts/evaluation/06_evaluate_checkpoints.py --run-dir {{run_dir}} --dataset-dir {{dataset_dir}}
+generate-checkpoint-answers run_dir dataset_dir batch_size="4":
+    ./utils/rocm-run python scripts/evaluation/06a_generate_checkpoint_answers.py --run-dir {{run_dir}} --dataset-dir {{dataset_dir}} --batch-size {{batch_size}}
+
+judge-checkpoint-answers run_dir workers="6":
+    uv run python scripts/evaluation/06b_judge_checkpoint_answers.py --run-dir {{run_dir}} --workers {{workers}}
 
 compare-rag run_dir model_results:
     uv run python scripts/evaluation/07_compare_winner_with_rag.py --run-dir {{run_dir}} --model-results {{model_results}}

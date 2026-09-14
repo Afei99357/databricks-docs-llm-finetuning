@@ -100,10 +100,14 @@ just export-dataset v001
 # 5. Run a conservative 4B QLoRA smoke test.
 just train-smoke configs/experiments/05_qwen35_4b_v001.yaml
 
-# 6. Run generated-answer evaluation across the full 400-question benchmark.
-just evaluate-checkpoints \
+# 6a. Generate answers across the full 400-question benchmark.
+just generate-checkpoint-answers \
   artifacts/models/qwen35-4b-v001-smoke \
   artifacts/datasets/v001
+
+# 6b. Judge the saved answers using the local Muse llama.cpp server.
+just judge-checkpoint-answers \
+  artifacts/models/qwen35-4b-v001-smoke
 
 # 7. Compare the selected adapter with the running local RAG application.
 just compare-rag \
@@ -124,7 +128,8 @@ Do not run stages 03–07 until both training-Q&A generators finish.
 | 03 | `scripts/qa_generation/03_generate_paired_evaluation_qa.py` | Creates alternate evaluation questions over the same knowledge as accepted training examples. |
 | 04 | `scripts/qa_generation/04_export_final_datasets.py` | Validates contexts and exports immutable training and benchmark JSONL snapshots. |
 | 05 | `scripts/training/05_finetune_llm.py` | Fine-tunes Qwen with QLoRA and preserves the best checkpoint and adapter. |
-| 06 | `scripts/evaluation/06_evaluate_checkpoints.py` | Scores base models, checkpoints, and adapters on generated answers for the full benchmark. |
+| 06a | `scripts/evaluation/06a_generate_checkpoint_answers.py` | Generates and saves base-model and checkpoint answers for the full benchmark. |
+| 06b | `scripts/evaluation/06b_judge_checkpoint_answers.py` | Uses the local Muse judge to score saved answers in parallel. |
 | 07 | `scripts/evaluation/07_compare_winner_with_rag.py` | Compares the selected adapter with the local RAG application answer by answer. |
 
 ## Evaluation approach
@@ -142,6 +147,10 @@ comparison on that same benchmark.
 
 MLflow records configurations, metrics, reports, and model-selection evidence
 locally. See [the MLflow workflow notes](docs/mlflow_workflow.md) for details.
+
+Answer generation batches four prompts on the training GPU by default. Muse
+judging uses six concurrent llama.cpp requests by default; pass a different
+batch size or worker count as the final `just` argument when needed.
 
 ## Practical notes
 
