@@ -287,7 +287,7 @@ def main() -> None:
 
     pending = db.execute(
         "SELECT training_example_id, payload FROM evaluation_candidates "
-        "WHERE evaluation_status = 'pending' ORDER BY training_question_id"
+        "WHERE evaluation_status = 'pending' ORDER BY training_example_id"
     ).fetchall()
     print(f"evaluation items pending: {len(pending):,}")
     client = OpenAI(base_url=BASE_URL, api_key=API_KEY)

@@ -18,8 +18,8 @@ from pathlib import Path
 import mlflow
 import torch
 from datasets import load_dataset
-from trl import SFTConfig, SFTTrainer
 from unsloth import FastVisionModel
+from trl import SFTConfig, SFTTrainer
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -105,7 +105,7 @@ def main() -> None:
         eval_interval = config["smoke_test_eval_steps"] if args.smoke_test else config["eval_steps"]
         if interval != eval_interval:
             raise ValueError("save and evaluation intervals must match when selecting the best checkpoint")
-        trainer = SFTTrainer(model=model, processing_class=tokenizer, train_dataset=dataset, eval_dataset=selection, callbacks=[MLflowTrainerCallback()], args=SFTConfig(output_dir=str(checkpoint_dir), max_length=config["max_seq_length"], per_device_train_batch_size=config["per_device_train_batch_size"], per_device_eval_batch_size=1, gradient_accumulation_steps=config["gradient_accumulation_steps"], learning_rate=config["learning_rate"], num_train_epochs=config["num_train_epochs"], max_steps=config["smoke_test_max_steps"] if args.smoke_test else -1, warmup_ratio=config["warmup_ratio"], lr_scheduler_type=config["lr_scheduler_type"], optim="adamw_8bit", bf16=True, fp16=False, gradient_checkpointing=True, logging_steps=config["logging_steps"], eval_strategy="steps", eval_steps=eval_interval, save_strategy="steps", save_steps=interval, save_total_limit=config["save_total_limit"], load_best_model_at_end=True, metric_for_best_model="eval_loss", greater_is_better=False, report_to="none", seed=config["seed"], completion_only_loss=True, packing=False))
+        trainer = SFTTrainer(model=model, processing_class=tokenizer, train_dataset=dataset, eval_dataset=selection, callbacks=[MLflowTrainerCallback()], args=SFTConfig(output_dir=str(checkpoint_dir), max_length=config["max_seq_length"], per_device_train_batch_size=config["per_device_train_batch_size"], per_device_eval_batch_size=1, gradient_accumulation_steps=config["gradient_accumulation_steps"], learning_rate=config["learning_rate"], num_train_epochs=config["num_train_epochs"], max_steps=config["smoke_test_max_steps"] if args.smoke_test else -1, warmup_ratio=config["warmup_ratio"], lr_scheduler_type=config["lr_scheduler_type"], optim="adamw_8bit", bf16=True, fp16=False, gradient_checkpointing=True, logging_steps=config["logging_steps"], eval_strategy="steps", eval_steps=eval_interval, save_strategy="steps", save_steps=interval, save_total_limit=config["save_total_limit"], load_best_model_at_end=True, metric_for_best_model="eval_loss", greater_is_better=False, report_to="none", seed=config["seed"], completion_only_loss=True, packing=False, eos_token=tokenizer.eos_token, pad_token=tokenizer.pad_token or tokenizer.eos_token))
         result = trainer.train(resume_from_checkpoint=str(args.resume_from) if args.resume_from else None)
         trainer.save_state()
         if not trainer.state.best_model_checkpoint:
