@@ -1,0 +1,28 @@
+# First run after exporting artifacts/datasets/v001/. Copy this file for every
+# material experiment change; never edit a configuration after its run begins.
+experiment_name: databricks-docs-finetuning
+run_name: qwen35-4b-v001-full
+dataset_version: v001
+dataset_dir: artifacts/datasets/v001
+base_model: unsloth/Qwen3.5-4B
+base_model_revision: main
+seed: 20260912
+max_seq_length: 2048
+learning_rate: 0.0001
+num_train_epochs: 4
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 4
+warmup_ratio: 0.03
+lr_scheduler_type: linear
+save_steps: 300
+save_total_limit: 2
+logging_steps: 1
+smoke_test_examples: 128
+smoke_test_max_steps: 10
+smoke_test_save_steps: 5
+smoke_test_eval_steps: 5
+eval_steps: 300
+lora:
+  rank: 16
+  alpha: 32
+  dropout: 0.05
