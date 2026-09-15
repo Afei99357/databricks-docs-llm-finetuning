@@ -41,8 +41,11 @@ generate-checkpoint-answers run_dir dataset_dir batch_size="4":
 judge-checkpoint-answers run_dir workers="6":
     uv run python scripts/evaluation/06b_judge_checkpoint_answers.py --run-dir {{run_dir}} --workers {{workers}}
 
-compare-rag run_dir model_results:
-    uv run python scripts/evaluation/07_compare_winner_with_rag.py --run-dir {{run_dir}} --model-results {{model_results}}
+generate-rag-answers run_dir model_results workers="6":
+    uv run python scripts/evaluation/07a_generate_rag_answers.py --run-dir {{run_dir}} --model-results {{model_results}} --workers {{workers}}
+
+judge-rag-comparison run_dir model_results rag_results workers="6":
+    uv run python scripts/evaluation/07b_judge_rag_comparison.py --run-dir {{run_dir}} --model-results {{model_results}} --rag-results {{rag_results}} --workers {{workers}}
 
 wait-then-independent:
     ./utils/wait_for_page_aware_then_run_independent.sh

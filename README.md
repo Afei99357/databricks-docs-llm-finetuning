@@ -109,10 +109,16 @@ just generate-checkpoint-answers \
 just judge-checkpoint-answers \
   artifacts/models/qwen35-4b-v001-smoke
 
-# 7. Compare the selected adapter with the running local RAG application.
-just compare-rag \
+# 7a. Generate RAG answers for the selected checkpoint.
+just generate-rag-answers \
   artifacts/models/qwen35-4b-v001-smoke \
   artifacts/models/qwen35-4b-v001-smoke/evaluations/best_adapter-benchmark_400.json
+
+# 7b. Judge the saved checkpoint and RAG answers.
+just judge-rag-comparison \
+  artifacts/models/qwen35-4b-v001-smoke \
+  artifacts/models/qwen35-4b-v001-smoke/evaluations/best_adapter-benchmark_400.json \
+  artifacts/models/qwen35-4b-v001-smoke/evaluations/best_adapter-rag-answers_400.jsonl
 ```
 
 Each Q&A generation stage is resumable. Its SQLite database records completed,
@@ -130,7 +136,8 @@ Do not run stages 03–07 until both training-Q&A generators finish.
 | 05 | `scripts/training/05_finetune_llm.py` | Fine-tunes Qwen with QLoRA and preserves the best checkpoint and adapter. |
 | 06a | `scripts/evaluation/06a_generate_checkpoint_answers.py` | Generates and saves base-model and checkpoint answers for the full benchmark. |
 | 06b | `scripts/evaluation/06b_judge_checkpoint_answers.py` | Uses the local Muse judge to score saved answers in parallel. |
-| 07 | `scripts/evaluation/07_compare_winner_with_rag.py` | Compares the selected adapter with the local RAG application answer by answer. |
+| 07a | `scripts/evaluation/07a_generate_rag_answers.py` | Generates and saves local-RAG answers for the selected checkpoint benchmark. |
+| 07b | `scripts/evaluation/07b_judge_rag_comparison.py` | Uses a configurable judge to compare saved checkpoint and RAG answers. |
 
 ## Evaluation approach
 
@@ -149,8 +156,10 @@ MLflow records configurations, metrics, reports, and model-selection evidence
 locally. See [the MLflow workflow notes](docs/mlflow_workflow.md) for details.
 
 Answer generation batches four prompts on the training GPU by default. Muse
-judging uses six concurrent llama.cpp requests by default; pass a different
-batch size or worker count as the final `just` argument when needed.
+judging and RAG generation use six concurrent requests by default; pass a
+different batch size or worker count as the final `just` argument when needed.
+For an independent RAG comparison, configure `JUDGE_MODEL` (and optionally
+`JUDGE_BASE_URL`) to a model other than the Muse model behind the RAG app.
 
 ## Practical notes
 
