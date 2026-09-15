@@ -1,7 +1,11 @@
 # Version-controlled settings for the next 9B adapter experiment.
 # Copy this file for each material experiment change; never overwrite a run's
 # configuration after starting it.
-experiment_name: qwen35-9b-documentation
+# `experiment_name` remains a fallback for legacy scripts. New runs are routed
+# by type so each MLflow table has a consistent set of columns.
+experiment_name: databricks-docs-training
+training_experiment_name: databricks-docs-training
+answer_evaluation_experiment_name: databricks-docs-answer-evaluation
 run_name: qwen35-9b-sft-data-v003-lr1e-4-seed20260910
 dataset_version: qa_v003
 base_model: unsloth/Qwen3.5-9B

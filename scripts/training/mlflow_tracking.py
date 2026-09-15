@@ -33,15 +33,20 @@ def load_experiment_config(path: Path) -> dict[str, Any]:
     return config
 
 
+def experiment_name_for(config: dict[str, Any], run_type: str) -> str:
+    """Return a type-specific MLflow experiment, with legacy-config fallback."""
+    return str(config.get(f"{run_type}_experiment_name", config["experiment_name"]))
+
+
 def start_run(project_root: Path, config_path: Path, manifest_path: Path) -> dict[str, Any]:
     """Start an MLflow run and log immutable setup evidence."""
     config = load_experiment_config(config_path)
     tracking_uri = f"sqlite:///{(project_root / 'mlflow.db').resolve()}"
     mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(config["experiment_name"])
+    mlflow.set_experiment(experiment_name_for(config, "training"))
     if mlflow.active_run():
         raise RuntimeError("An MLflow run is already active; end it before starting a new training run.")
-    mlflow.start_run(run_name=config["run_name"])
+    mlflow.start_run(run_name=f"training-{config['run_name']}")
     mlflow.set_tags(
         {
             "run_kind": "qlora-training",

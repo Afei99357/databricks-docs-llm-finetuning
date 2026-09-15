@@ -1,173 +1,108 @@
-# Databricks documentation LLM fine-tuning
+# Databricks documentation fine-tuning
 
-Can a local fine-tuned LLM answer stable Databricks documentation questions
-well enough to complement a citation-backed RAG system?
+This project creates a local documentation Q&A dataset, fine-tunes Qwen with
+QLoRA, and evaluates the base model, adapters, checkpoints, and a local RAG
+system on the same frozen benchmark.
 
-This project builds a reproducible experiment to answer that question. It
-creates grounded Q&A data from a local Databricks documentation corpus,
-fine-tunes Qwen with QLoRA on an AMD GPU, and evaluates the resulting adapter
-against its base model and a local RAG application.
+The evaluation is designed to answer two questions:
 
-The goal is not to replace RAG. RAG remains the route for fresh,
-evidence-sensitive, or citation-required questions. This project tests where a
-local adapter can be useful for stable, recurring knowledge and where it should
-fall back to RAG.
+- Does fine-tuning improve the base model for stable Databricks documentation?
+- How do the best local model and RAG compare when the same independent judge
+  scores both against the same reference answers?
 
-## What the project does
+## Requirements
 
-```text
-Databricks documentation SQLite corpus
-        |
-        +-- page-aware Q&A: preserve a page's structure and headings
-        |
-        +-- independent Q&A: cover chunks and their immediate context
-        |
-        +-- paired benchmark Q&A: alternate questions over the same knowledge
-        v
-Immutable training and benchmark JSONL snapshots
-        v
-Qwen QLoRA fine-tuning with MLflow tracking
-        v
-Base model vs. adapter evaluation
-        v
-Best local adapter vs. local RAG comparison
-```
+- A local Databricks documentation SQLite corpus.
+- An OpenAI-compatible Muse server for Q&A generation and the RAG application.
+- An OpenAI-compatible Qwen 3.8 server as the independent evaluator.
+- An AMD ROCm-capable GPU for QLoRA training and checkpoint answer generation.
+- `uv` and `just`.
 
-The paired benchmark is deliberately separate from training. The adapter may
-learn the documented knowledge, but it never sees the benchmark's exact
-question-and-answer pairs during training.
-
-## Repository layout
-
-```text
-scripts/
-  qa_generation/     numbered data-generation and dataset-export stages
-  training/          QLoRA training and MLflow helper
-  evaluation/        model and RAG comparison stages
-configs/experiments/ versioned training configurations
-utils/               ROCm runtime and dependency helpers
-docs/                focused implementation notes
-artifacts/           local generation state, datasets, models, and results
-```
-
-`artifacts/`, `.env`, MLflow data, and local model environments are ignored by
-Git. The repository contains the code, configuration, and documentation needed
-to reproduce an experiment without publishing local data or credentials.
-
-## Local setup
-
-This project expects:
-
-- a local Databricks documentation SQLite corpus;
-- a local OpenAI-compatible server for Q&A generation and judging;
-- an AMD ROCm-capable GPU for fine-tuning; and
-- dependencies installed with `uv`.
-
-Create your local configuration:
+Create your local configuration and update the paths and servers as needed:
 
 ```bash
 cp .env.example .env
-```
-
-Set `SOURCE_SQLITE_PATH` in `.env` to your local documentation corpus. Start
-your generation server before running any Q&A stage.
-
-Validate the GPU environment:
-
-```bash
 just sync-rocm-deps
 just check-rocm
 ```
 
-## Run the experiment
+`GENERATOR_*` configures Muse. `JUDGE_*` configures Qwen 3.8. Never use Muse
+as the evaluator for RAG answers that Muse helped generate.
 
-Run these stages from the repository root. `just` is the recommended interface:
-it supplies the ROCm runtime automatically for GPU work.
+## Pipeline
 
-```bash
-# 1. Generate page-aware training Q&A.
-just page-aware-qa
-
-# 2. Generate independent chunk-and-neighbour Q&A.
-just independent-qa
-
-# 3. Generate 400 paired evaluation Q&A items.
-just paired-evaluation-qa
-
-# 4. Validate the generated data and create immutable versioned datasets.
-just export-dataset v001
-
-# 5. Run a conservative 4B QLoRA smoke test.
-just train-smoke configs/experiments/05_qwen35_4b_v001.yaml
-
-# 6a. Generate answers across the full 400-question benchmark.
-just generate-checkpoint-answers \
-  artifacts/models/qwen35-4b-v001-smoke \
-  artifacts/datasets/v001
-
-# 6b. Judge the saved answers using the local Muse llama.cpp server.
-just judge-checkpoint-answers \
-  artifacts/models/qwen35-4b-v001-smoke
-
-# 7a. Generate RAG answers for the selected checkpoint.
-just generate-rag-answers \
-  artifacts/models/qwen35-4b-v001-smoke \
-  artifacts/models/qwen35-4b-v001-smoke/evaluations/best_adapter-benchmark_400.json
-
-# 7b. Judge the saved checkpoint and RAG answers.
-just judge-rag-comparison \
-  artifacts/models/qwen35-4b-v001-smoke \
-  artifacts/models/qwen35-4b-v001-smoke/evaluations/best_adapter-benchmark_400.json \
-  artifacts/models/qwen35-4b-v001-smoke/evaluations/best_adapter-rag-answers_400.jsonl
+```text
+01–04  Build versioned training and frozen benchmark datasets
+05     Fine-tune Qwen and retain the best checkpoint by validation loss
+06     Generate base-model and checkpoint answers for the frozen benchmark
+07     Generate RAG answers for that same benchmark
+08     Score every saved answer source with Qwen 3.8
+09     Rank the comparable score reports without another LLM call
 ```
 
-Each Q&A generation stage is resumable. Its SQLite database records completed,
-pending, and failed work, so rerunning a stage retries only unfinished items.
-Do not run stages 03–07 until both training-Q&A generators finish.
+Run from the repository root:
 
-## Workflow scripts
+```bash
+# Data
+just page-aware-qa
+just independent-qa
+just paired-evaluation-qa
+just export-dataset v001
 
-| Step | Script | What it does |
-| ---: | --- | --- |
-| 01 | `scripts/qa_generation/01_generate_page_aware_qa.py` | Generates training Q&A from whole documentation pages or heading-aware page windows. |
-| 02 | `scripts/qa_generation/02_generate_independent_qa.py` | Generates complementary training Q&A from each chunk and its adjacent context. |
-| 03 | `scripts/qa_generation/03_generate_paired_evaluation_qa.py` | Creates alternate evaluation questions over the same knowledge as accepted training examples. |
-| 04 | `scripts/qa_generation/04_export_final_datasets.py` | Validates contexts and exports immutable training and benchmark JSONL snapshots. |
-| 05 | `scripts/training/05_finetune_llm.py` | Fine-tunes Qwen with QLoRA and preserves the best checkpoint and adapter. |
-| 06a | `scripts/evaluation/06a_generate_checkpoint_answers.py` | Generates and saves base-model and checkpoint answers for the full benchmark. |
-| 06b | `scripts/evaluation/06b_judge_checkpoint_answers.py` | Uses the local Muse judge to score saved answers in parallel. |
-| 07a | `scripts/evaluation/07a_generate_rag_answers.py` | Generates and saves local-RAG answers for the selected checkpoint benchmark. |
-| 07b | `scripts/evaluation/07b_judge_rag_comparison.py` | Uses a configurable judge to compare saved checkpoint and RAG answers. |
+# Training
+just train configs/experiments/qwen35_9b_v001.yaml
 
-## Evaluation approach
+# Evaluation. Run 06 and 07 sequentially: both use the local GPU stack.
+just generate-checkpoint-answers artifacts/models/RUN_NAME artifacts/datasets/v001
+just generate-rag-answers artifacts/models/RUN_NAME artifacts/datasets/v001
 
-The experiment answers three distinct questions:
+# Qwen scores all saved model and RAG answers. The final argument is workers.
+just judge-all-answers artifacts/models/RUN_NAME 10
+just compare-evaluation-results artifacts/models/RUN_NAME
+```
 
-1. Does fine-tuning improve the original base model?
-2. Which adapter/checkpoint produces the best generated answers?
-3. How does the best local adapter compare with the grounded RAG application?
+Steps 06–08 are resumable. Generated answers are saved under
+`artifacts/models/RUN_NAME/evaluations/answers/`; Qwen score reports are saved
+under `evaluations/scores/`; step 09 writes `comparison_400.json`.
 
-Training uses the fixed 50-question selection subset to retain the best
-checkpoint. The final decision uses generated answers and a separate judge on
-all 400 paired benchmark items. The RAG comparison is an answer-by-answer
-comparison on that same benchmark.
+## Evaluation metrics
 
-MLflow records configurations, metrics, reports, and model-selection evidence
-locally. See [the MLflow workflow notes](docs/mlflow_workflow.md) for details.
+Qwen 3.8 scores each answer against its reference answer:
 
-Answer generation batches four prompts on the training GPU by default. Muse
-judging and RAG generation use six concurrent requests by default; pass a
-different batch size or worker count as the final `just` argument when needed.
-For an independent RAG comparison, configure `JUDGE_MODEL` (and optionally
-`JUDGE_BASE_URL`) to a model other than the Muse model behind the RAG app.
+- `correctness_mean` — factual accuracy, averaged from 1 to 5.
+- `completeness_mean` — coverage of required information, averaged from 1 to 5.
+- `unsupported_claims_total` — unsupported factual statements across the set.
+- `latency_ms_mean` — generation latency, when available.
 
-## Practical notes
+Step 09 ranks by correctness, completeness, fewer unsupported claims, then
+latency. This makes the RAG and checkpoint rows directly comparable.
 
-- Run Python scripts through `just` or `utils/rocm-run`; the wrapper supplies
-  the ROCm runtime libraries needed by PyTorch.
-- The RAG comparison requires the local RAG API at
-  `http://127.0.0.1:8000/api/answer`, unless overridden at the command line.
-- Each material training run gets a new YAML file under `configs/experiments/`.
-  Do not alter a configuration after the run begins.
-- `scripts/training/test_checkpoint.py` is an optional manual checkpoint probe,
-  not a numbered workflow step.
+## MLflow
+
+Training records go to `databricks-docs-training`. Reference-scored evaluation
+records go to `databricks-docs-answer-evaluation`. The latter contains the same
+metric columns for base, checkpoint, adapter, and RAG rows.
+
+Start the local UI with:
+
+```bash
+just mlflow-ui
+```
+
+Use `tags.smoke_test = 'false'` to hide smoke checks. The experiment names are
+set in each YAML configuration with `training_experiment_name` and
+`answer_evaluation_experiment_name`.
+
+## Repository layout
+
+```text
+scripts/qa_generation/  Q&A generation and dataset export
+scripts/training/       QLoRA training, probes, and MLflow helpers
+scripts/evaluation/     Answer generation, scoring, and result ranking
+configs/experiments/    Versioned experiment configurations
+artifacts/              Local datasets, models, answers, and reports
+```
+
+Local artifacts, MLflow data, `.env`, and model environments are ignored by
+Git. Do not change a YAML configuration after its run starts; copy it for each
+material experiment change.

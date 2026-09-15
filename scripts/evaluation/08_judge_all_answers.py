@@ -1,4 +1,4 @@
-"""Judge saved checkpoint answers with the local Muse llama.cpp server."""
+"""Score all saved benchmark answers against their references with Qwen."""
 from __future__ import annotations
 
 import argparse
@@ -41,11 +41,15 @@ def load_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def evaluation_experiment_name(config: dict) -> str:
+    return str(config.get("answer_evaluation_experiment_name", config["experiment_name"]))
+
+
 def judge_client() -> OpenAI:
     if not hasattr(CLIENTS, "judge"):
         CLIENTS.judge = OpenAI(
-            base_url=os.environ["GENERATOR_BASE_URL"],
-            api_key=os.getenv("GENERATOR_API_KEY", "local"),
+            base_url=os.getenv("JUDGE_BASE_URL", os.environ["GENERATOR_BASE_URL"]),
+            api_key=os.getenv("JUDGE_API_KEY", os.getenv("GENERATOR_API_KEY", "local")),
         )
     return CLIENTS.judge
 
@@ -55,7 +59,7 @@ def judge_answer(row: dict, max_tokens: int, retries: int) -> dict:
     for attempt in range(retries):
         try:
             verdict = judge_client().chat.completions.parse(
-                model=os.environ["GENERATOR_MODEL"],
+                model=os.getenv("JUDGE_MODEL", os.environ["GENERATOR_MODEL"]),
                 messages=[
                     {
                         "role": "system",
@@ -79,7 +83,7 @@ def judge_answer(row: dict, max_tokens: int, retries: int) -> dict:
             if attempt + 1 < retries:
                 time.sleep(attempt + 1)
     raise RuntimeError(
-        f"Muse could not judge benchmark index {row['benchmark_index']} after {retries} attempts: {last_error}"
+        f"Qwen judge could not score benchmark index {row['benchmark_index']} after {retries} attempts: {last_error}"
     ) from last_error
 
 
@@ -101,12 +105,12 @@ def main() -> None:
     load_dotenv(PROJECT_ROOT / ".env", override=True)
     try:
         OpenAI(
-            base_url=os.environ["GENERATOR_BASE_URL"],
-            api_key=os.getenv("GENERATOR_API_KEY", "local"),
+            base_url=os.getenv("JUDGE_BASE_URL", os.environ["GENERATOR_BASE_URL"]),
+            api_key=os.getenv("JUDGE_API_KEY", os.getenv("GENERATOR_API_KEY", "local")),
         ).models.list()
     except Exception as error:
         raise RuntimeError(
-            f"Cannot reach the Muse judge at {os.environ['GENERATOR_BASE_URL']}. Start the llama.cpp server, then retry."
+            f"Cannot reach the Qwen judge at {os.getenv('JUDGE_BASE_URL', os.environ['GENERATOR_BASE_URL'])}. Start the judge server, then retry."
         ) from error
     answers_dir = run_dir / "evaluations" / "answers"
     answer_files = sorted(answers_dir.glob("*-benchmark_*.jsonl"))
@@ -114,7 +118,7 @@ def main() -> None:
         raise ValueError(f"No generated answer files found in {answers_dir}")
 
     mlflow.set_tracking_uri(f"sqlite:///{(PROJECT_ROOT / 'mlflow.db').resolve()}")
-    mlflow.set_experiment(config["experiment_name"])
+    mlflow.set_experiment(evaluation_experiment_name(config))
     for answers_path in answer_files:
         answers = load_jsonl(answers_path)
         if not answers:
@@ -122,7 +126,8 @@ def main() -> None:
         candidate = answers[0]["candidate"]
         if any(row.get("candidate") != candidate for row in answers):
             raise ValueError(f"{answers_path} contains more than one candidate")
-        output = run_dir / "evaluations" / f"{candidate}-benchmark_{len(answers)}.json"
+        output = run_dir / "evaluations" / "scores" / f"{candidate}-benchmark_{len(answers)}.json"
+        output.parent.mkdir(parents=True, exist_ok=True)
         partial = output.with_suffix(".jsonl.partial")
         if output.is_file():
             completed = json.loads(output.read_text())["rows"]
@@ -165,10 +170,11 @@ def main() -> None:
         candidate_metrics = metrics(judged_rows)
         output.write_text(json.dumps({"candidate": candidate, "metrics": candidate_metrics, "rows": judged_rows}, indent=2) + "\n")
         partial.unlink()
-        with mlflow.start_run(run_name=f"{config['run_name']}-benchmark-{candidate}"):
-            mlflow.set_tags({"run_kind": "paired-benchmark", "parent_training_run": config["run_name"], "candidate": candidate})
+        source = "rag" if candidate == "rag" else "checkpoint"
+        with mlflow.start_run(run_name=f"score-{source}-{candidate}-n{len(answers)}-{config['run_name']}"):
+            mlflow.set_tags({"run_kind": "reference-scoring", "parent_training_run": config["run_name"], "answer_source": source, "candidate": candidate, "judge_model": os.getenv("JUDGE_MODEL", os.environ["GENERATOR_MODEL"]), "benchmark_size": str(len(answers)), "smoke_test": str(len(answers) == 1).lower()})
             mlflow.log_metrics(candidate_metrics)
-            mlflow.log_artifact(str(output), artifact_path="benchmark")
+            mlflow.log_artifact(str(output), artifact_path="reference_scores")
         print({"candidate": candidate, **candidate_metrics})
 
 

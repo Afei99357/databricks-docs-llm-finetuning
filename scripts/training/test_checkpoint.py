@@ -13,6 +13,10 @@ from unsloth import FastLanguageModel
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def training_experiment_name(config: dict) -> str:
+    return str(config.get("training_experiment_name", config["experiment_name"]))
+
+
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True, help="Directory created by 05_finetune_llm.py.")
@@ -93,9 +97,9 @@ def main() -> None:
     output_path.write_text(json.dumps(result, indent=2) + "\n")
 
     mlflow.set_tracking_uri(f"sqlite:///{(PROJECT_ROOT / 'mlflow.db').resolve()}")
-    mlflow.set_experiment(run_config["experiment_name"])
-    with mlflow.start_run(run_name=f"{run_config['run_name']}-probe-{checkpoint.name}"):
-        mlflow.set_tags({"run_kind": "checkpoint-probe", "parent_training_run": run_config["run_name"], "checkpoint": checkpoint.name})
+    mlflow.set_experiment(training_experiment_name(run_config))
+    with mlflow.start_run(run_name=f"probe-{checkpoint.name}-{run_config['run_name']}"):
+        mlflow.set_tags({"run_kind": "checkpoint-probe", "parent_training_run": run_config["run_name"], "checkpoint": checkpoint.name, "smoke_test": str(bool(run_config.get("smoke_test", False))).lower()})
         mlflow.log_params({"base_model": run_config["base_model"], "max_new_tokens": args.max_new_tokens})
         mlflow.log_artifact(str(output_path), artifact_path="checkpoint_probes")
     print(json.dumps(result, indent=2))

@@ -97,6 +97,7 @@ def main() -> None:
 
     start_run(PROJECT_ROOT, config_path, manifest_path)
     try:
+        mlflow.set_tag("smoke_test", str(args.smoke_test).lower())
         mlflow.log_artifact(str(run_dir / "environment.json"), artifact_path="environment")
         model, tokenizer = FastVisionModel.from_pretrained(model_name=config["base_model"], max_seq_length=config["max_seq_length"], dtype=None, load_in_4bit=True, use_gradient_checkpointing="unsloth", text_only=True)
         lora = config["lora"]

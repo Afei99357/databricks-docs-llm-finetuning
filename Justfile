@@ -36,16 +36,16 @@ train config:
     ./utils/rocm-run python scripts/training/05_finetune_llm.py --config {{config}} --run
 
 generate-checkpoint-answers run_dir dataset_dir batch_size="4":
-    ./utils/rocm-run python scripts/evaluation/06a_generate_checkpoint_answers.py --run-dir {{run_dir}} --dataset-dir {{dataset_dir}} --batch-size {{batch_size}}
+    ./utils/rocm-run python scripts/evaluation/06_generate_checkpoint_answers.py --run-dir {{run_dir}} --dataset-dir {{dataset_dir}} --batch-size {{batch_size}}
 
-judge-checkpoint-answers run_dir workers="6":
-    uv run python scripts/evaluation/06b_judge_checkpoint_answers.py --run-dir {{run_dir}} --workers {{workers}}
+generate-rag-answers run_dir dataset_dir workers="6":
+    uv run python scripts/evaluation/07_generate_rag_answers.py --run-dir {{run_dir}} --dataset-dir {{dataset_dir}} --workers {{workers}}
 
-generate-rag-answers run_dir model_results workers="6":
-    uv run python scripts/evaluation/07a_generate_rag_answers.py --run-dir {{run_dir}} --model-results {{model_results}} --workers {{workers}}
+judge-all-answers run_dir workers="6":
+    uv run python scripts/evaluation/08_judge_all_answers.py --run-dir {{run_dir}} --workers {{workers}}
 
-judge-rag-comparison run_dir model_results rag_results workers="6":
-    uv run python scripts/evaluation/07b_judge_rag_comparison.py --run-dir {{run_dir}} --model-results {{model_results}} --rag-results {{rag_results}} --workers {{workers}}
+compare-evaluation-results run_dir benchmark_size="400":
+    uv run python scripts/evaluation/09_compare_evaluation_results.py --run-dir {{run_dir}} --benchmark-size {{benchmark_size}}
 
 wait-then-independent:
     ./utils/wait_for_page_aware_then_run_independent.sh
