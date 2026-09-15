@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -29,6 +30,8 @@ def args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=6)
+    parser.add_argument("--max-tokens", type=int, default=2000)
+    parser.add_argument("--retries", type=int, default=3)
     return parser.parse_args()
 
 
@@ -47,22 +50,37 @@ def judge_client() -> OpenAI:
     return CLIENTS.judge
 
 
-def judge_answer(row: dict) -> dict:
-    verdict = judge_client().chat.completions.parse(
-        model=os.environ["GENERATOR_MODEL"],
-        messages=[
-            {
-                "role": "system",
-                "content": "Score the candidate answer against the reference. Return JSON only. Correctness and completeness are 1-5. Count unsupported factual claims.",
-            },
-            {
-                "role": "user",
-                "content": f"QUESTION:\n{row['question']}\n\nREFERENCE:\n{row['reference']}\n\nCANDIDATE:\n{row['answer']}",
-            },
-        ],
-        response_format=Judgement,
-    ).choices[0].message.parsed
-    return {**row, "judge": verdict.model_dump()}
+def judge_answer(row: dict, max_tokens: int, retries: int) -> dict:
+    last_error: Exception | None = None
+    for attempt in range(retries):
+        try:
+            verdict = judge_client().chat.completions.parse(
+                model=os.environ["GENERATOR_MODEL"],
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Score the candidate answer against the reference. Return exactly one compact JSON object. Correctness and completeness are 1-5. Count unsupported factual claims. Keep rationale to at most two sentences.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"QUESTION:\n{row['question']}\n\nREFERENCE:\n{row['reference']}\n\nCANDIDATE:\n{row['answer']}",
+                    },
+                ],
+                response_format=Judgement,
+                max_tokens=max_tokens,
+                temperature=0,
+                reasoning_effort="none",
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                timeout=90,
+            ).choices[0].message.parsed
+            return {**row, "judge": verdict.model_dump()}
+        except Exception as error:
+            last_error = error
+            if attempt + 1 < retries:
+                time.sleep(attempt + 1)
+    raise RuntimeError(
+        f"Muse could not judge benchmark index {row['benchmark_index']} after {retries} attempts: {last_error}"
+    ) from last_error
 
 
 def metrics(rows: list[dict]) -> dict[str, float | int]:
@@ -76,8 +94,8 @@ def metrics(rows: list[dict]) -> dict[str, float | int]:
 
 def main() -> None:
     options = args()
-    if options.workers < 1:
-        raise ValueError("workers must be at least 1")
+    if options.workers < 1 or options.max_tokens < 1 or options.retries < 1:
+        raise ValueError("workers, max tokens, and retries must each be at least 1")
     run_dir = options.run_dir.resolve()
     config = json.loads((run_dir / "run_config.json").read_text())
     load_dotenv(PROJECT_ROOT / ".env", override=True)
@@ -119,13 +137,29 @@ def main() -> None:
         pending = [row for row in answers if row["benchmark_index"] not in completed_indexes]
 
         with partial.open("a") as handle, ThreadPoolExecutor(max_workers=options.workers) as pool, tqdm(total=len(answers), initial=len(judged_rows), desc=f"{candidate} judging", unit="answer") as progress:
-            futures = {pool.submit(judge_answer, row): row["benchmark_index"] for row in pending}
+            futures = {
+                pool.submit(judge_answer, row, options.max_tokens, options.retries): row["benchmark_index"]
+                for row in pending
+            }
+            failures = []
             for future in as_completed(futures):
-                row = future.result()
+                try:
+                    row = future.result()
+                except Exception as error:
+                    failures.append((futures[future], str(error)))
+                    progress.write(f"{candidate} index {futures[future]} failed: {error}")
+                    continue
                 handle.write(json.dumps(row) + "\n")
                 handle.flush()
                 judged_rows.append(row)
                 progress.update(1)
+
+        if failures:
+            details = "; ".join(f"{index}: {error}" for index, error in failures[:3])
+            raise RuntimeError(
+                f"{candidate}: {len(failures)} answer(s) still failed after retries ({details}). "
+                "Completed verdicts were saved; rerun the command to retry only the unresolved answers."
+            )
 
         judged_rows.sort(key=lambda row: row["benchmark_index"])
         candidate_metrics = metrics(judged_rows)
